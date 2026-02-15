@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import re
 from pathlib import Path
 
 from PIL import Image
@@ -21,15 +22,14 @@ from config import (
 from pipeline.utils import retry_on_rate_limit
 
 
-# Hard suffix appended to EVERY image generation prompt as a safety net.
-# Even if the planner forgets or the LLM ignores instructions, this ensures
-# the image gen model gets explicit anti-text, anti-collage rules.
-_PROMPT_SUFFIX = (
-    " STRICT RULES: This must be ONE single illustration — no collage, no grid, "
-    "no multiple panels, no multiple views, no montage. "
-    "Absolutely NO text, NO letters, NO numbers, NO labels, NO words anywhere in the image. "
-    "NO leader lines, NO arrows, NO annotation lines, NO callout lines. "
-    "Pure visual artwork only."
+# Short suffix — image gen models work best with brief positive prompts.
+_PROMPT_SUFFIX = ". Single illustration, pure visual artwork, no text."
+
+# Regex to strip any negative/prohibition phrases the planner may have included.
+_NEGATION_RE = re.compile(
+    r"(?i)"
+    r"(\b(do not|don'?t|never|must not|should not|cannot|no|without|absolutely no|strictly no)\b"
+    r"[^.;]*[.;]?\s*)",
 )
 
 
@@ -46,7 +46,15 @@ def generate_image(spec: dict, session_id: str, provider: str | None = None) -> 
         Path to the saved PNG image
     """
     provider = provider or IMAGE_GEN_PROVIDER
-    prompt = spec["drawing_prompt"] + _PROMPT_SUFFIX
+
+    # Clean the drawing prompt: strip any negative/prohibition phrases and append short suffix
+    raw_prompt = spec["drawing_prompt"]
+    cleaned = _NEGATION_RE.sub("", raw_prompt).strip()
+    # Collapse any leftover double spaces or double periods
+    cleaned = re.sub(r"  +", " ", cleaned)
+    cleaned = re.sub(r"\.\.+", ".", cleaned)
+    prompt = cleaned + _PROMPT_SUFFIX
+    print(f"[image_gen] Prompt ({len(prompt)} chars): {prompt[:120]}...")
 
     if provider == "gemini":
         img = _generate_with_gemini(prompt)

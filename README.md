@@ -1,56 +1,66 @@
 # Medical Figure Generator
 
-A chat-based tool for generating labeled medical and scientific textbook-style figures. It combines LLM-driven prompt structuring, cloud image generation APIs, local SVG vectorization (via [PyTorch-SVGRender](https://github.com/ximinng/PyTorch-SVGRender)), and LLM-powered annotation — all orchestrated through a FastAPI web interface.
+A chat-based tool for generating labeled medical and scientific textbook-style figures. It combines LLM-driven diagram planning, cloud image generation APIs (Gemini Imagen / DALL-E 3), vision-model label placement, and Pillow/SVG rendering — all orchestrated through a FastAPI web interface with iterative refinement.
 
 ---
 
 ## Architecture
 
-The system is a **5-stage pipeline** exposed through a chat UI:
+The system is a **4-stage pipeline** with an optional **refinement loop**, exposed through a chat UI:
 
 ```
 User Message
     │
     ▼
-┌──────────────────────┐
-│ 1. Prompt Structurer │  LLM decomposes request into drawing prompt + label list
-└──────────┬───────────┘
+┌──────────────────────────┐
+│ 1. Diagram Planner       │  LLM generates drawing prompt + label list + auditor QA loop
+└──────────┬───────────────┘
            ▼
-┌──────────────────────┐
-│ 2. Image Generator   │  Gemini Imagen or DALL-E 3 produces a raster PNG
-└──────────┬───────────┘
+┌──────────────────────────┐
+│ 2. Image Generator       │  Gemini Imagen or DALL-E 3 produces a clean raster PNG
+└──────────┬───────────────┘
            ▼
-┌──────────────────────┐
-│ 3. Vectorizer        │  PyTorch-SVGRender LIVE converts PNG → SVG (runs locally on GPU)
-└──────────┬───────────┘
+┌──────────────────────────┐
+│ 3. Vision Label Placer   │  2-pass zone-classification via Vision LLM locates structures
+└──────────┬───────────────┘
            ▼
-┌──────────────────────┐
-│ 4. Annotator         │  LLM places text labels + leader lines onto the SVG
-└──────────┬───────────┘
+┌──────────────────────────┐
+│ 4. Label Renderer        │  Pillow renders annotated PNG + embedded-raster SVG
+└──────────┬───────────────┘
            ▼
-┌──────────────────────┐
-│ 5. Refiner           │  Chat loop: user asks for changes → SVG edits or re-generation
-└──────────────────────┘
+┌──────────────────────────┐
+│ 5. Refiner (chat loop)   │  Hybrid intent classifier routes edits, style changes,
+│                          │  label repositioning, or full regeneration
+└──────────────────────────┘
 ```
+
+### Key Design Decisions
+
+- **No local GPU required.** All heavy lifting (image generation, vision analysis) uses cloud APIs.
+- **Positive-only image prompts.** The planner writes purely descriptive prompts (no prohibitions). A regex safety net strips any negations before the prompt reaches the image model, preventing "attention to forbidden concepts" artifacts.
+- **Classification over regression.** Vision models are poor at estimating exact pixel coordinates. The label placer converts coordinate estimation into a two-pass classification task using numbered zone overlays, which VLMs handle reliably.
+- **Hybrid intent classification.** The refiner uses 23+ deterministic regex patterns before falling back to an LLM, ensuring fast and reliable intent routing for common refinement requests.
 
 ### Project Structure
 
 ```
 medical-figure-gen/
 ├── .env                          # API keys (not committed)
+├── .env.example                  # Template for .env
 ├── .gitignore
 ├── config.py                     # Central config: paths, models, settings
 ├── app.py                        # FastAPI server — orchestrates pipeline + serves UI
 ├── requirements.txt
 ├── pipeline/
 │   ├── __init__.py
-│   ├── prompt_structurer.py      # Stage 1 — LLM prompt decomposition
-│   ├── image_generator.py        # Stage 2 — Cloud image generation
-│   ├── vectorizer.py             # Stage 3 — Raster→SVG via PyTorch-SVGRender
-│   ├── annotator.py              # Stage 4 — LLM label placement
-│   └── refiner.py                # Stage 5 — Iterative refinement
+│   ├── diagram_planner.py        # Stage 1 — LLM plan generation + auditor loop
+│   ├── image_generator.py        # Stage 2 — Cloud image generation (Gemini / OpenAI)
+│   ├── vision_label_placer.py    # Stage 3 — 2-pass zone-classification label placement
+│   ├── label_renderer.py         # Stage 4 — Pillow PNG + SVG annotation rendering
+│   ├── refiner.py                # Stage 5 — Multi-action refinement router
+│   └── utils.py                  # Shared utilities (retry decorator, etc.)
 ├── templates/
-│   └── index.html                # Chat UI (split panel: chat + preview)
+│   └── index.html                # Chat UI (split panel: chat + three preview tabs)
 └── static/
     └── generated/                # Runtime output (per-session folders)
 ```
@@ -62,24 +72,8 @@ medical-figure-gen/
 | Requirement | Details |
 |---|---|
 | **Python** | 3.10 (conda env recommended) |
-| **CUDA GPU** | Any NVIDIA GPU with ≥2 GB VRAM (vectorization only) |
-| **PyTorch-SVGRender** | Cloned and working as a sibling directory (see below) |
-| **DiffVG** | Compiled from source inside PyTorch-SVGRender (see below) |
-| **API keys** | At least one of: Google Gemini, OpenAI |
-
-### Expected directory layout
-
-```
-svg-render/                       # parent folder
-├── PyTorch-SVGRender/            # cloned repo with DiffVG compiled
-│   ├── svg_render.py
-│   ├── diffvg/                   # DiffVG source (compiled)
-│   └── ...
-└── medical-figure-gen/           # this project
-    └── ...
-```
-
-`config.py` resolves `SVGRENDER_ROOT` as `../PyTorch-SVGRender` relative to this project.
+| **API keys** | At least one of: Google Gemini API key, OpenAI API key |
+| **No GPU required** | All computation is done via cloud APIs |
 
 ---
 
@@ -92,46 +86,20 @@ git clone <your-repo-url> medical-figure-gen
 cd medical-figure-gen
 ```
 
-### 2. Create conda environment (if not already done)
+### 2. Create conda environment
 
 ```bash
 conda create -n svgrender python=3.10 -y
 conda activate svgrender
 ```
 
-### 3. Install PyTorch (match your CUDA version)
+### 3. Install dependencies
 
 ```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-```
-
-### 4. Install PyTorch-SVGRender + DiffVG
-
-Follow the [PyTorch-SVGRender installation guide](https://github.com/ximinng/PyTorch-SVGRender#installation). Key steps:
-
-```bash
-cd ../PyTorch-SVGRender
-pip install -r requirements.txt
-pip install git+https://github.com/openai/CLIP.git --no-build-isolation
-
-# DiffVG (compile from source)
-git clone https://github.com/BachiLi/diffvg.git
-cd diffvg
-git submodule update --init --recursive
-python setup.py install
-cd ../..
-```
-
-> **Windows notes:** DiffVG may need patches for MSVC. See the "Windows DiffVG Fixes" section below.
-
-### 5. Install this project's dependencies
-
-```bash
-cd medical-figure-gen
 pip install -r requirements.txt
 ```
 
-### 6. Configure API keys
+### 4. Configure API keys
 
 Copy the example and fill in your keys:
 
@@ -144,18 +112,10 @@ Edit `.env`:
 ```dotenv
 GOOGLE_GENERATIVE_AI_API_KEY=your-google-api-key
 OPENAI_API_KEY=your-openai-api-key
-ANTHROPIC_API_KEY=your-anthropic-api-key      # optional, reserved for future use
 
 IMAGE_GEN_PROVIDER=gemini    # or "openai"
 LLM_PROVIDER=gemini          # or "openai"
 ```
-
-### 7. Update `config.py` paths (if needed)
-
-Open [config.py](config.py) and verify:
-
-- `PYTHON_EXE` — absolute path to the conda env's Python executable
-- `SVGRENDER_ROOT` — auto-resolved to `../PyTorch-SVGRender`, adjust if your layout differs
 
 ---
 
@@ -166,23 +126,29 @@ Open [config.py](config.py) and verify:
 python -m uvicorn app:app --host 127.0.0.1 --port 8000
 ```
 
+> **Windows note:** If `conda activate` doesn't work in VS Code terminal, use the full path:
+> ```
+> C:\Users\<you>\anaconda3\envs\svgrender\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000
+> ```
+
 Open **http://127.0.0.1:8000** in your browser.
 
-### Quick start
+### Quick Start
 
-1. Type: `"Draw a labeled diagram of a human neuron"`
-2. Wait for the pipeline to complete (Stage 1–4)
-3. The raster PNG and annotated SVG appear in the preview panel
-4. Refine: `"Make the labels larger"` or `"Change label color to blue"`
-5. Type `/new` to start a fresh figure
+1. Type: `"Draw a human hand anatomy diagram"`
+2. Wait for the pipeline (15–30 seconds depending on API)
+3. The annotated PNG and SVG appear in the preview tabs
+4. Refine: `"Move the labels to the left"`, `"Use numbered style"`, `"Add a label for Ulna"`
+5. Regenerate: `"Give me a better image"` or `"Regenerate with more detail"`
 
-### UI Options
+### UI Controls
 
 | Control | Effect |
 |---|---|
-| **Skip vectorization** checkbox | Returns only the raster PNG (fast, no GPU needed) |
-| **Skip annotation** checkbox | Returns SVG without text labels |
-| `/new` command | Resets the session for a new figure |
+| **LLM Provider** dropdown | Gemini or OpenAI for planning & vision tasks |
+| **Image Provider** dropdown | Gemini Imagen or DALL-E 3 for image generation |
+| **Label Style** dropdown | `boxed_text` (default), `plain_text`, `numbered`, `color_coded`, `minimal`, `textbook` |
+| **Skip Annotation** checkbox | Returns only the raw raster image (no labels) |
 
 ---
 
@@ -192,16 +158,16 @@ All settings live in [config.py](config.py):
 
 | Setting | Default | Description |
 |---|---|---|
-| `LLM_PROVIDER` | `"gemini"` | LLM for prompt structuring & annotation (`"gemini"` or `"openai"`) |
+| `LLM_PROVIDER` | `"gemini"` | LLM for planning, vision, & refinement (`"gemini"` or `"openai"`) |
 | `IMAGE_GEN_PROVIDER` | `"gemini"` | Image generation API (`"gemini"` or `"openai"`) |
-| `GEMINI_LLM_MODEL` | `"gemini-2.0-flash"` | Gemini model for text tasks |
+| `GEMINI_LLM_MODEL` | `"gemini-2.0-flash"` | Gemini model for text & vision tasks |
 | `GEMINI_IMAGE_MODEL` | `"gemini-2.0-flash-exp-image-generation"` | Gemini model for image generation |
 | `OPENAI_IMAGE_MODEL` | `"dall-e-3"` | OpenAI image model |
-| `OPENAI_LLM_MODEL` | `"gpt-4o"` | OpenAI text model |
-| `VECTORIZER_METHOD` | `"live"` | SVGRender method: `"live"` (recommended) or `"diffvg"` |
-| `NUM_PATHS` | `128` | Number of SVG paths (more = more detail, slower) |
-| `NUM_ITER` | `500` | Optimization iterations per path group |
-| `IMAGE_SIZE` | `480` | Input image resize before vectorization |
+| `OPENAI_LLM_MODEL` | `"gpt-4o"` | OpenAI text & vision model |
+| `DEFAULT_LABEL_STYLE` | `"boxed_text"` | Default annotation style |
+| `AUDITOR_MAX_ITERATIONS` | `2` | Max planner↔auditor feedback loops (0 = skip) |
+| `FONT_PATH` | `arial.ttf` | Font for label rendering (Windows default) |
+| `FONT_BOLD_PATH` | `arialbd.ttf` | Bold font for label rendering |
 
 ---
 
@@ -210,25 +176,56 @@ All settings live in [config.py](config.py):
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/` | Serves the chat UI |
-| `POST` | `/api/generate` | Full pipeline run. Body: `{ "message": "...", "skip_vectorize": false, "skip_annotate": false }` |
-| `POST` | `/api/refine` | Refine existing figure. Body: `{ "session_id": "...", "message": "..." }` |
+| `POST` | `/api/generate` | Full pipeline run |
+| `POST` | `/api/refine` | Refine existing figure |
 | `GET` | `/api/sessions` | List active sessions |
 | `GET` | `/generated/{session_id}/{file}` | Serve generated files (PNG, SVG) |
 
-### Generate response shape
+### Generate request
+
+```json
+{
+  "message": "Draw a human hand anatomy diagram",
+  "label_style": "boxed_text",
+  "skip_annotate": false,
+  "llm_provider": "gemini",
+  "image_provider": "gemini"
+}
+```
+
+### Generate response
 
 ```json
 {
   "session_id": "a1b2c3d4",
   "steps": [
-    { "stage": "prompt_structurer", "result": { "drawing_prompt": "...", "labels": [...], "style": "...", "description": "..." } },
+    { "stage": "diagram_planner", "result": { "labels": 12, "type": "anatomy" } },
     { "stage": "image_generator", "result": "/generated/a1b2c3d4/raster.png" },
-    { "stage": "vectorizer", "result": "/generated/a1b2c3d4/vector.svg" },
-    { "stage": "annotator", "result": "/generated/a1b2c3d4/annotated.svg" }
+    { "stage": "vision_label_placer", "result": "Located 12 labels" },
+    { "stage": "label_renderer", "result": "boxed_text style, 12 labels" }
   ],
   "raster_url": "/generated/a1b2c3d4/raster.png",
+  "annotated_url": "/generated/a1b2c3d4/annotated.png",
   "svg_url": "/generated/a1b2c3d4/annotated.svg",
-  "spec": { "drawing_prompt": "...", "labels": [...], "style": "...", "description": "..." }
+  "plan": {
+    "labels": ["Distal Phalanges", "Middle Phalanges", "..."],
+    "description": "Dorsal view of a human right hand showing all 27 skeletal bones.",
+    "style": "colored_diagram",
+    "diagram_type": "anatomy",
+    "label_side": "right"
+  }
+}
+```
+
+### Refine request
+
+```json
+{
+  "session_id": "a1b2c3d4",
+  "message": "Change labels to numbered style",
+  "label_style": "numbered",
+  "llm_provider": "gemini",
+  "image_provider": "gemini"
 }
 ```
 
@@ -236,86 +233,101 @@ All settings live in [config.py](config.py):
 
 ## How Each Stage Works
 
-### Stage 1 — Prompt Structurer (`pipeline/prompt_structurer.py`)
+### Stage 1 — Diagram Planner (`pipeline/diagram_planner.py`)
 
-Sends the raw user message to an LLM with a system prompt that instructs it to return structured JSON:
+Sends the user message to an LLM with a system prompt that produces structured JSON:
 
 ```json
 {
-  "drawing_prompt": "Scientific medical textbook illustration of...",
-  "labels": ["Dendrites", "Axon", "Soma", ...],
+  "drawing_prompt": "A single scientific medical illustration of a human right hand...",
+  "labels": ["Distal Phalanges", "Middle Phalanges", "..."],
+  "label_side": "right",
   "style": "colored_diagram",
-  "description": "Labeled diagram of a neuron."
+  "description": "Dorsal view of a human right hand showing all 27 skeletal bones.",
+  "diagram_type": "anatomy"
 }
 ```
 
+Key rules enforced by the planner prompt:
+- **Drawing prompts are purely positive** — no prohibitions ("do not", "no text", etc.)
+- **Max ~60 words** — concise descriptions generate cleaner images
+- An **auditor** LLM reviews the plan and can request fixes (up to `AUDITOR_MAX_ITERATIONS` rounds)
+
 ### Stage 2 — Image Generator (`pipeline/image_generator.py`)
 
-Calls the configured image generation API (Gemini Imagen or DALL-E 3) with the `drawing_prompt`. Saves the result as `raster.png` in the session folder.
+Calls the configured image API (Gemini Imagen or DALL-E 3) with the drawing prompt.
 
-### Stage 3 — Vectorizer (`pipeline/vectorizer.py`)
+Before sending, the generator:
+1. **Strips negations** via regex — removes any "do not", "no text", etc. the planner may have included
+2. **Appends a short suffix** — `". Single illustration, pure visual artwork, no text."` (minimal, effective)
+3. **Saves** the result as `raster.png` (1024×1024)
 
-Runs PyTorch-SVGRender's LIVE pipeline as a **subprocess**:
+### Stage 3 — Vision Label Placer (`pipeline/vision_label_placer.py`)
 
-```
-python svg_render.py x=live target=<path_to_png> x.num_paths=128 x.num_iter=500 ...
-```
+Locates where each anatomical structure appears in the generated image using a **two-pass zone-classification** approach:
 
-This avoids Hydra config conflicts and keeps the vectorizer isolated. Requires a CUDA GPU. Output: `vector.svg`.
+**Pass 1 — Coarse (zone identification):**
+- Overlays an N×N grid of **numbered zones** (red circles with white numbers) onto the image
+- Asks the vision model: *"Which zone number contains each structure?"* — a classification task
+- Grid size adapts to label count (e.g., 5×5 = 25 zones for 12 labels)
 
-### Stage 4 — Annotator (`pipeline/annotator.py`)
+**Pass 2 — Fine (sub-cell localisation):**
+- For each occupied zone, crops that region and overlays a **3×3 lettered grid** (A–I)
+- Asks the vision model: *"Which sub-cell contains the center of the structure?"*
+- Maps zone + sub-cell back to full-image pixel coordinates
 
-1. Parses the SVG to get canvas dimensions
-2. Sends the label list + canvas size to an LLM
-3. LLM returns coordinates for each label
-4. Injects `<text>` elements and dashed leader lines into the SVG DOM
+This approach yields ~67px precision on a 1024×1024 image and guarantees structures in different zones get different coordinates — solving the "everything clusters at center" problem that plagued direct pixel-coordinate estimation.
 
-Output: `annotated.svg`.
+### Stage 4 — Label Renderer (`pipeline/label_renderer.py`)
+
+Takes the located points and renders annotations in two formats:
+
+- **Annotated PNG** — Pillow draws labels with leader lines directly on the raster image
+- **Annotated SVG** — Embeds the raster as a `<image>` element with vector `<text>` and `<line>` overlays
+
+Supports 6 annotation styles: `plain_text`, `boxed_text`, `numbered`, `color_coded`, `minimal`, `textbook`.
+
+Layout features:
+- Sorts labels by y-coordinate for clean vertical ordering
+- Resolves overlapping labels with automatic spacing
+- Configurable label side (right, left, top, bottom, around)
 
 ### Stage 5 — Refiner (`pipeline/refiner.py`)
 
-Classifies user refinement requests into categories:
+Handles iterative chat-based refinement with a **hybrid intent classifier**:
 
-- **label_edit** — change text, size, position → direct SVG manipulation
-- **color_edit** — change colors → direct SVG manipulation
-- **style_edit** — change strokes, fonts → direct SVG manipulation
-- **regenerate** — re-run the full pipeline with a modified prompt
-- **add_element** — add arrows, highlights → direct SVG manipulation
+1. **Deterministic patterns** — 23+ regex rules match common requests instantly:
+   - `"change style to numbered"` → `style_change`
+   - `"remove the capitate label"` → `remove_label`
+   - `"add a label for ulna"` → `add_label`
+   - `"move the labels"` → `reposition_labels`
+   - `"give me a better image"` → `regenerate`
+
+2. **LLM fallback** — Only used when no regex matches; classifies into one of 6 action types
+
+Supported actions:
+
+| Action | What happens |
+|---|---|
+| `style_change` | Re-renders labels with new style (no API calls) |
+| `label_edit` | Modifies label text, re-renders |
+| `remove_label` | Removes a label, re-renders |
+| `add_label` | Adds label to plan, re-runs vision placer + renderer |
+| `reposition_labels` | Re-runs vision placer on existing image |
+| `regenerate` | Re-runs full pipeline (planner → image gen → vision → render) |
 
 ---
 
-## Windows DiffVG Fixes
+## Troubleshooting
 
-If compiling DiffVG on Windows with MSVC, you may need these patches (already applied in our setup):
-
-1. **`diffvg/setup.py`** — `LIBDIR` is `None` on Windows:
-   ```python
-   # Add fallback when LIBDIR is None
-   if libdir is None:
-       libdir = os.path.join(sys.prefix, 'libs')
-   ```
-
-2. **`diffvg/diffvg.h`** — `log2` conflicts with MSVC intrinsic:
-   ```cpp
-   #ifndef _MSC_VER
-   inline double log2(double x) { return log(x) / log(2); }
-   #endif
-   ```
-
-3. **`diffvg/setup.py`** — CMake finds wrong Python version:
-   ```python
-   # Add explicit Python path hints to cmake_args
-   cmake_args += [
-       f'-DPython_EXECUTABLE={sys.executable}',
-       f'-DPython_INCLUDE_DIR={sysconfig.get_path("include")}',
-       f'-DPython_LIBRARY={os.path.join(libdir, "python310.lib")}',
-   ]
-   ```
-
-4. **Post-install** — compiled binary may lack `.pyd` extension:
-   ```bash
-   # In site-packages, rename diffvg → diffvg.pyd
-   ```
+| Problem | Solution |
+|---|---|
+| `conda activate` doesn't work in VS Code terminal | Use full Python path: `C:\Users\...\anaconda3\envs\svgrender\python.exe` |
+| "Gemini did not return an image" | The model may not support your prompt. Try `IMAGE_GEN_PROVIDER=openai` |
+| Image has multiple panels / collage | Check that `_NEGATION_RE` in `image_generator.py` is stripping prohibitions. The planner prompt should produce only positive descriptions |
+| Labels all cluster at center | Ensure `vision_label_placer.py` is using the 2-pass zone approach (check server logs for "Pass 1: NxN zone grid") |
+| Rate limit errors (429) | Built-in retry with exponential backoff handles this. Reduce request frequency or check API quotas |
+| Font not found on Linux/macOS | Set `FONT_PATH` and `FONT_BOLD_PATH` in `.env` to valid TTF paths |
 
 ---
 
@@ -325,25 +337,12 @@ To add a new LLM or image generation provider:
 
 1. Add the API key to `.env` and `config.py`
 2. Add a new branch in the relevant pipeline file:
-   - LLM: `prompt_structurer.py`, `annotator.py`, `refiner.py`
-   - Image: `image_generator.py`
-3. Add the provider name to the `IMAGE_GEN_PROVIDER` / `LLM_PROVIDER` options in `.env`
-
----
-
-## Troubleshooting
-
-| Problem | Solution |
-|---|---|
-| `conda activate` doesn't work in VS Code terminal | Use the full Python path: `C:\Users\...\anaconda3\envs\svgrender\python.exe` |
-| Tkinter warnings during vectorization | Set `MPLBACKEND=Agg` (already handled in `vectorizer.py`) |
-| Vectorizer timeout | Increase `timeout` in `vectorizer.py` (default: 600s). Reduce `NUM_PATHS` or `NUM_ITER` for faster runs |
-| "Gemini did not return an image" | The Gemini image model may not support your prompt. Try switching to `IMAGE_GEN_PROVIDER=openai` |
-| DiffVG import error | Verify `diffvg.pyd` exists in `site-packages/`. Re-run `python setup.py install` in the diffvg directory |
-| No SVG output found | Check the `static/generated/<session>/vectorize/` folder for Hydra output logs |
+   - **LLM tasks:** `diagram_planner.py`, `vision_label_placer.py`, `refiner.py`
+   - **Image generation:** `image_generator.py`
+3. Add the provider name to `IMAGE_GEN_PROVIDER` / `LLM_PROVIDER` options
 
 ---
 
 ## License
 
-This project uses PyTorch-SVGRender (MIT License) for vectorization. See [PyTorch-SVGRender/LICENSE](../PyTorch-SVGRender/LICENSE) for details.
+MIT
