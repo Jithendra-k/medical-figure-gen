@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+static/generated/*
+!static/generated/.gitkeep
+*.png
+*.svg
+workspace/

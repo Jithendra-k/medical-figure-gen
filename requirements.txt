@@ -1,0 +1,19 @@
+# Medical Figure Generator - Dependencies
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-dotenv>=1.0.0
+jinja2>=3.1.0
+
+# LLM & Image Generation APIs
+google-genai>=1.0.0
+openai>=1.30.0
+anthropic>=0.34.0
+
+# Image processing
+Pillow>=10.0.0
+
+# SVG manipulation (for annotator/refiner)
+# svgpathtools already installed in svgrender env
+
+# Not listed (provided by svgrender env):
+# torch, pydiffvg, clip, etc.

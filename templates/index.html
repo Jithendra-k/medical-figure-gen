@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medical Figure Generator</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #f5f5f5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: #1a56db;
+            color: white;
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        header h1 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        header .badge {
+            background: rgba(255,255,255,0.2);
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+        }
+
+        .main {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Chat Panel */
+        .chat-panel {
+            width: 420px;
+            min-width: 320px;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #ddd;
+            background: white;
+        }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .msg {
+            max-width: 90%;
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }
+
+        .msg.user {
+            align-self: flex-end;
+            background: #1a56db;
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .msg.assistant {
+            align-self: flex-start;
+            background: #e8edf4;
+            color: #1a1a1a;
+            border-bottom-left-radius: 4px;
+        }
+
+        .msg.system {
+            align-self: center;
+            background: #fff3cd;
+            color: #856404;
+            font-size: 12px;
+            border-radius: 8px;
+        }
+
+        .msg.error {
+            align-self: center;
+            background: #f8d7da;
+            color: #842029;
+            font-size: 12px;
+            border-radius: 8px;
+        }
+
+        .msg .step-list {
+            margin-top: 6px;
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        .msg .step-list div {
+            padding: 2px 0;
+        }
+
+        .msg .step-list .done::before { content: "✓ "; color: #28a745; }
+        .msg .step-list .fail::before { content: "✗ "; color: #dc3545; }
+        .msg .step-list .pending::before { content: "⏳ "; }
+
+        .input-area {
+            padding: 12px;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 8px;
+        }
+
+        .input-area textarea {
+            flex: 1;
+            resize: none;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+            min-height: 44px;
+            max-height: 120px;
+        }
+
+        .input-area textarea:focus {
+            border-color: #1a56db;
+        }
+
+        .input-area button {
+            background: #1a56db;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 0 20px;
+            font-size: 14px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .input-area button:hover { background: #1648b8; }
+        .input-area button:disabled { background: #aaa; cursor: not-allowed; }
+
+        .options-bar {
+            padding: 8px 12px;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 12px;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .options-bar label {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+        }
+
+        /* Preview Panel */
+        .preview-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #fafafa;
+        }
+
+        .preview-tabs {
+            display: flex;
+            border-bottom: 1px solid #ddd;
+            background: white;
+        }
+
+        .preview-tabs button {
+            padding: 10px 20px;
+            border: none;
+            background: none;
+            font-size: 13px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            color: #666;
+        }
+
+        .preview-tabs button.active {
+            color: #1a56db;
+            border-bottom-color: #1a56db;
+        }
+
+        .preview-content {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            overflow: auto;
+        }
+
+        .preview-content img,
+        .preview-content object {
+            max-width: 100%;
+            max-height: 100%;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .preview-placeholder {
+            color: #999;
+            text-align: center;
+        }
+
+        .preview-placeholder .icon {
+            font-size: 64px;
+            margin-bottom: 12px;
+        }
+
+        .download-bar {
+            padding: 8px 16px;
+            border-top: 1px solid #ddd;
+            background: white;
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .download-bar a {
+            padding: 6px 16px;
+            background: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .download-bar a:hover { background: #218838; }
+        .download-bar a.hidden { display: none; }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #fff;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+
+        .spinner.dark {
+            border-color: #1a56db;
+            border-top-color: transparent;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .options-bar select {
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 12px;
+            background: white;
+            cursor: pointer;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .main { flex-direction: column; }
+            .chat-panel { width: 100%; border-right: none; border-bottom: 1px solid #ddd; max-height: 50vh; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Medical Figure Generator</h1>
+        <span class="badge">Beta</span>
+    </header>
+
+    <div class="main">
+        <div class="chat-panel">
+            <div class="messages" id="messages">
+                <div class="msg assistant">
+                    Welcome! Describe the medical/scientific figure you'd like to generate.<br>
+                    <small>Example: "Draw a labeled diagram of a human neuron"</small>
+                </div>
+            </div>
+            <div class="options-bar">
+                <label>
+                    LLM:
+                    <select id="llmProvider">
+                        <option value="gemini" selected>Gemini</option>
+                        <option value="openai">OpenAI</option>
+                    </select>
+                </label>
+                <label>
+                    Image:
+                    <select id="imageProvider">
+                        <option value="gemini" selected>Gemini Imagen</option>
+                        <option value="openai">DALL-E 3</option>
+                    </select>
+                </label>
+                <label>
+                    Labels:
+                    <select id="labelStyle">
+                        <option value="boxed_text" selected>Boxed Labels</option>
+                        <option value="plain_text">Plain Text</option>
+                        <option value="numbered">Numbered</option>
+                        <option value="color_coded">Color-Coded</option>
+                        <option value="minimal">Minimal</option>
+                        <option value="textbook">Textbook</option>
+                    </select>
+                </label>
+                <label><input type="checkbox" id="skipAnnotate"> Skip labels</label>
+            </div>
+            <div class="input-area">
+                <textarea id="userInput" placeholder="Describe a figure..." rows="1"></textarea>
+                <button id="sendBtn" onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+
+        <div class="preview-panel">
+            <div class="preview-tabs" id="previewTabs">
+                <button class="active" onclick="showTab('raster')">Raster (PNG)</button>
+                <button onclick="showTab('annotated')">Annotated (PNG)</button>
+                <button onclick="showTab('svg')">Editable (SVG)</button>
+            </div>
+            <div class="preview-content" id="previewContent">
+                <div class="preview-placeholder">
+                    <div class="icon">🔬</div>
+                    <div>Your generated figure will appear here</div>
+                </div>
+            </div>
+            <div class="download-bar">
+                <a id="dlPng" class="hidden" download>Download PNG</a>
+                <a id="dlSvg" class="hidden" download>Download SVG</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentSession = null;
+        let currentRaster = null;
+        let currentAnnotated = null;
+        let currentSvg = null;
+        let activeTab = 'raster';
+        let generating = false;
+
+        const messagesEl = document.getElementById('messages');
+        const inputEl = document.getElementById('userInput');
+        const sendBtn = document.getElementById('sendBtn');
+
+        // Auto-resize textarea
+        inputEl.addEventListener('input', () => {
+            inputEl.style.height = 'auto';
+            inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+        });
+
+        // Enter to send (Shift+Enter for newline)
+        inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        function addMessage(text, type = 'assistant') {
+            const div = document.createElement('div');
+            div.className = `msg ${type}`;
+            div.innerHTML = text;
+            messagesEl.appendChild(div);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+            return div;
+        }
+
+        function showTab(tab) {
+            activeTab = tab;
+            document.querySelectorAll('.preview-tabs button').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.preview-tabs button').forEach(b => {
+                if ((tab === 'raster' && b.textContent.includes('Raster')) ||
+                    (tab === 'annotated' && b.textContent.includes('Annotated')) ||
+                    (tab === 'svg' && b.textContent.includes('Editable'))) {
+                    b.classList.add('active');
+                }
+            });
+            updatePreview();
+        }
+
+        function updatePreview() {
+            const content = document.getElementById('previewContent');
+            const dlPng = document.getElementById('dlPng');
+            const dlSvg = document.getElementById('dlSvg');
+
+            dlPng.classList.add('hidden');
+            dlSvg.classList.add('hidden');
+
+            if (activeTab === 'raster' && currentRaster) {
+                content.innerHTML = `<img src="${currentRaster}" alt="Generated figure">`;
+                dlPng.href = currentRaster;
+                dlPng.classList.remove('hidden');
+            } else if (activeTab === 'annotated' && currentAnnotated) {
+                content.innerHTML = `<img src="${currentAnnotated}" alt="Annotated figure">`;
+                dlPng.href = currentAnnotated;
+                dlPng.classList.remove('hidden');
+            } else if (activeTab === 'svg' && currentSvg) {
+                content.innerHTML = `<object type="image/svg+xml" data="${currentSvg}" style="width:100%;height:100%">SVG not supported</object>`;
+                dlSvg.href = currentSvg;
+                dlSvg.classList.remove('hidden');
+            } else {
+                const icon = activeTab === 'svg' ? '📐' : '🔬';
+                const label = activeTab === 'raster' ? 'raster image' : activeTab === 'annotated' ? 'annotated image' : 'SVG';
+                content.innerHTML = `<div class="preview-placeholder"><div class="icon">${icon}</div><div>No ${label} yet</div></div>`;
+            }
+        }
+
+        async function sendMessage() {
+            const text = inputEl.value.trim();
+            if (!text || generating) return;
+
+            // Handle /new command
+            if (text === '/new') {
+                currentSession = null;
+                currentRaster = null;
+                currentAnnotated = null;
+                currentSvg = null;
+                inputEl.value = '';
+                addMessage('Starting a new figure. Describe what you want!', 'system');
+                document.getElementById('previewContent').innerHTML =
+                    '<div class="preview-placeholder"><div class="icon">🔬</div><div>Your generated figure will appear here</div></div>';
+                return;
+            }
+
+            addMessage(text, 'user');
+            inputEl.value = '';
+            inputEl.style.height = 'auto';
+
+            generating = true;
+            sendBtn.disabled = true;
+            sendBtn.innerHTML = '<span class="spinner"></span>';
+
+            const skipAnn = document.getElementById('skipAnnotate').checked;
+            const llmProv = document.getElementById('llmProvider').value;
+            const imgProv = document.getElementById('imageProvider').value;
+            const labelStyle = document.getElementById('labelStyle').value;
+
+            if (currentSession) {
+                await doRefine(text, labelStyle);
+            } else {
+                await doGenerate(text, skipAnn, llmProv, imgProv, labelStyle);
+            }
+
+            generating = false;
+            sendBtn.disabled = false;
+            sendBtn.innerHTML = 'Send';
+        }
+
+        async function doGenerate(text, skipAnn, llmProv, imgProv, labelStyle) {
+            const statusMsg = addMessage('<span class="spinner dark"></span> Generating figure...', 'system');
+
+            try {
+                const resp = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: text,
+                        skip_annotate: skipAnn,
+                        llm_provider: llmProv,
+                        image_provider: imgProv,
+                        label_style: labelStyle,
+                    }),
+                });
+
+                const data = await resp.json();
+
+                if (data.error) {
+                    statusMsg.className = 'msg error';
+                    statusMsg.textContent = 'Error: ' + data.error;
+                    return;
+                }
+
+                currentSession = data.session_id;
+                const genTs = '?t=' + Date.now();
+                currentRaster = data.raster_url ? data.raster_url + genTs : null;
+                currentAnnotated = data.annotated_url ? data.annotated_url + genTs : null;
+                currentSvg = data.svg_url ? data.svg_url + genTs : null;
+
+                // Build step summary
+                let stepsHtml = '<div class="step-list">';
+                for (const step of (data.steps || [])) {
+                    if (step.error) {
+                        stepsHtml += `<div class="fail">${step.stage}: ${step.error}</div>`;
+                    } else {
+                        const detail = typeof step.result === 'string' ? '' : ` (${JSON.stringify(step.result)})`;
+                        stepsHtml += `<div class="done">${step.stage}${detail}</div>`;
+                    }
+                }
+                stepsHtml += '</div>';
+
+                statusMsg.className = 'msg assistant';
+                statusMsg.innerHTML = `Figure generated! Session: <b>${data.session_id}</b>${stepsHtml}`;
+
+                if (data.plan) {
+                    const labels = (data.plan.labels || []).join(', ');
+                    if (labels) {
+                        addMessage(`Labels: ${labels}<br><small>${data.plan.description || ''}</small>`, 'assistant');
+                    }
+                }
+
+                // Show the best available output
+                if (currentAnnotated) {
+                    showTab('annotated');
+                } else if (currentRaster) {
+                    showTab('raster');
+                }
+
+                addMessage('You can now refine the figure. Try: "use numbered labels", "rename Carpals to Carpal Bones", or "remove the Pisiform label"', 'system');
+
+            } catch (err) {
+                statusMsg.className = 'msg error';
+                statusMsg.textContent = 'Network error: ' + err.message;
+            }
+        }
+
+        async function doRefine(text, labelStyle) {
+            const statusMsg = addMessage('<span class="spinner dark"></span> Refining...', 'system');
+
+            try {
+                const resp = await fetch('/api/refine', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: currentSession,
+                        message: text,
+                        label_style: labelStyle,
+                        llm_provider: document.getElementById('llmProvider').value,
+                        image_provider: document.getElementById('imageProvider').value,
+                    }),
+                });
+
+                const data = await resp.json();
+
+                if (data.error) {
+                    statusMsg.className = 'msg error';
+                    statusMsg.textContent = 'Error: ' + data.error;
+                    return;
+                }
+
+                statusMsg.className = 'msg assistant';
+                statusMsg.innerHTML = `${data.explanation} <small>(${data.action})</small>`;
+
+                // Cache-bust: append timestamp so browser fetches the new image
+                const ts = '?t=' + Date.now();
+                if (data.raster_url) currentRaster = data.raster_url + ts;
+                if (data.annotated_url) currentAnnotated = data.annotated_url + ts;
+                if (data.svg_url) currentSvg = data.svg_url + ts;
+
+                // Switch to the best available tab
+                if (data.annotated_url) {
+                    showTab('annotated');
+                } else if (data.raster_url) {
+                    showTab('raster');
+                } else {
+                    updatePreview();
+                }
+
+            } catch (err) {
+                statusMsg.className = 'msg error';
+                statusMsg.textContent = 'Network error: ' + err.message;
+            }
+        }
+    </script>
+</body>
+</html>

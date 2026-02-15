@@ -1,0 +1,8 @@
+{
+    "extraPaths": [
+        "C:\\Users\\jithe\\anaconda3\\envs\\svgrender\\Lib\\site-packages"
+    ],
+    "pythonVersion": "3.10",
+    "pythonPlatform": "Windows",
+    "reportMissingImports": "warning"
+}
