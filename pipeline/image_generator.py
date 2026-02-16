@@ -22,8 +22,9 @@ from config import (
 from pipeline.utils import retry_on_rate_limit
 
 
-# Short suffix — image gen models work best with brief positive prompts.
+# Short suffixes — image gen models work best with brief positive prompts.
 _PROMPT_SUFFIX = ". Single illustration, pure visual artwork, no text."
+_PROMPT_SUFFIX_MULTI = ". Pure visual artwork, no text."
 
 # Regex to strip any negative/prohibition phrases the planner may have included.
 _NEGATION_RE = re.compile(
@@ -46,20 +47,25 @@ def generate_image(spec: dict, session_id: str, provider: str | None = None) -> 
         Path to the saved PNG image
     """
     provider = provider or IMAGE_GEN_PROVIDER
+    is_multi_view = spec.get("diagram_type") == "multi_view"
 
     # Clean the drawing prompt: strip any negative/prohibition phrases and append short suffix
     raw_prompt = spec["drawing_prompt"]
     cleaned = _NEGATION_RE.sub("", raw_prompt).strip()
     # Collapse any leftover double spaces or double periods
     cleaned = re.sub(r"  +", " ", cleaned)
-    cleaned = re.sub(r"\.\.+", ".", cleaned)
-    prompt = cleaned + _PROMPT_SUFFIX
-    print(f"[image_gen] Prompt ({len(prompt)} chars): {prompt[:120]}...")
+    cleaned = re.sub(r"\.\..+", ".", cleaned)
+
+    suffix = _PROMPT_SUFFIX_MULTI if is_multi_view else _PROMPT_SUFFIX
+    prompt = cleaned + suffix
+    print(f"[image_gen] {'multi-view' if is_multi_view else 'single'} "
+          f"Prompt ({len(prompt)} chars): {prompt[:120]}...")
 
     if provider == "gemini":
         img = _generate_with_gemini(prompt)
     elif provider == "openai":
-        img = _generate_with_openai(prompt)
+        size = "1792x1024" if is_multi_view else "1024x1024"
+        img = _generate_with_openai(prompt, size=size)
     else:
         raise ValueError(f"Unknown image provider: {provider}")
 
@@ -99,7 +105,7 @@ def _generate_with_gemini(prompt: str) -> Image.Image:
     raise RuntimeError("Gemini did not return an image. Response: " + str(response.text))
 
 
-def _generate_with_openai(prompt: str) -> Image.Image:
+def _generate_with_openai(prompt: str, size: str = "1024x1024") -> Image.Image:
     """Generate image using OpenAI DALL-E 3."""
     import openai
 
@@ -108,7 +114,7 @@ def _generate_with_openai(prompt: str) -> Image.Image:
     response = client.images.generate(
         model=OPENAI_IMAGE_MODEL,
         prompt=prompt,
-        size="1024x1024",
+        size=size,
         quality="standard",
         response_format="b64_json",
         n=1,

@@ -47,33 +47,35 @@ RULES:
 - If a structure spans multiple zones, pick the zone that contains its CENTER.
 - LOOK at the actual image content, not just the zone numbers.
 
-Return a JSON array (one entry per structure):
-[{{"label": "exact label text", "zone": <zone_number_int>}}, ...]
-
-Respond with ONLY the JSON array, no markdown."""
+IMPORTANT: Your ENTIRE response must be a valid JSON array and nothing else.  
+Format: [{{"label": "exact label text", "zone": <zone_number_int>}}, ...]
+Example: [{{"label": "Femur", "zone": 12}}, {{"label": "Tibia", "zone": 18}}]
+Do NOT include any explanation, markdown, or commentary — output ONLY the JSON array."""
 
 
 FINE_PROMPT = """You are a medical image analyst doing precise localisation.
 
 This is a CROPPED region of a larger medical image. The crop shows part of: {description}
 
-The crop has been divided into a 3×3 grid of sub-cells labelled:
-  A | B | C      (top row)
-  D | E | F      (middle row)
-  G | H | I      (bottom row)
+The crop has been divided into a 4×4 grid of 16 sub-cells:
+  Row 1:  A1 | A2 | A3 | A4
+  Row 2:  B1 | B2 | B3 | B4
+  Row 3:  C1 | C2 | C3 | C4
+  Row 4:  D1 | D2 | D3 | D4
 
-The grid lines and letters are drawn on the image.
+The grid lines and labels are drawn on the image.
 
-For each structure listed below, tell me which sub-cell (A–I) contains the CENTER of that structure.
-If the structure is not visible in this crop, respond with "E" (centre) as best estimate.
+For each structure listed below, identify which sub-cell contains the EXACT CENTER of that structure.
+Be as precise as possible — look at where the structure actually is, not the middle of the crop.
+If the structure is not visible in this crop, respond with "B2" as best estimate.
 
 Structures:
 {labels}
 
-Return a JSON array:
-[{{"label": "exact label text", "cell": "A"}}, ...]
-
-Respond with ONLY the JSON array, no markdown."""
+IMPORTANT: Your ENTIRE response must be a valid JSON array and nothing else.
+Format: [{{"label": "exact label text", "cell": "A1"}}, ...]
+Example: [{{"label": "Femur", "cell": "C3"}}, {{"label": "Tibia", "cell": "D1"}}]
+Do NOT include any explanation, markdown, or commentary — output ONLY the JSON array."""
 
 
 # ─────────────────────── Grid overlay builders ─────────────────────────
@@ -153,51 +155,53 @@ def _build_zone_grid(
 
 def _build_fine_grid(crop_bytes: bytes) -> bytes:
     """
-    Overlay a 3×3 sub-cell grid (A-I) on a cropped region for fine localisation.
+    Overlay a 4×4 sub-cell grid on a cropped region for fine localisation.
+    Labels: A1-A4, B1-B4, C1-C4, D1-D4.
     """
     img = Image.open(io.BytesIO(crop_bytes)).convert("RGBA")
     w, h = img.size
     overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
-    cell_w = w / 3
-    cell_h = h / 3
+    grid_n = 4
+    cell_w = w / grid_n
+    cell_h = h / grid_n
 
     try:
-        font = ImageFont.truetype("arialbd.ttf", max(16, int(min(cell_w, cell_h) * 0.3)))
+        font = ImageFont.truetype("arialbd.ttf", max(14, int(min(cell_w, cell_h) * 0.25)))
     except (OSError, IOError):
         font = ImageFont.load_default()
 
-    cell_labels = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
+    row_letters = ["A", "B", "C", "D"]
 
-    for idx, letter in enumerate(cell_labels):
-        r = idx // 3
-        c = idx % 3
-        x1 = int(c * cell_w)
-        y1 = int(r * cell_h)
-        x2 = int((c + 1) * cell_w)
-        y2 = int((r + 1) * cell_h)
-        cx_cell = (x1 + x2) // 2
-        cy_cell = (y1 + y2) // 2
+    for r in range(grid_n):
+        for c in range(grid_n):
+            label = f"{row_letters[r]}{c + 1}"
+            x1 = int(c * cell_w)
+            y1 = int(r * cell_h)
+            x2 = int((c + 1) * cell_w)
+            y2 = int((r + 1) * cell_h)
+            cx_cell = (x1 + x2) // 2
+            cy_cell = (y1 + y2) // 2
 
-        # Cell border
-        draw.rectangle([x1, y1, x2, y2], outline=(40, 120, 220, 180), width=2)
+            # Cell border
+            draw.rectangle([x1, y1, x2, y2], outline=(40, 120, 220, 180), width=2)
 
-        # Letter label in a blue circle
-        bbox = font.getbbox(letter)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-        pr = max(tw, th) // 2 + 4
-        draw.ellipse(
-            [cx_cell - pr, cy_cell - pr, cx_cell + pr, cy_cell + pr],
-            fill=(40, 120, 220, 180),
-        )
-        draw.text(
-            (cx_cell - tw // 2, cy_cell - th // 2 - 1),
-            letter,
-            fill=(255, 255, 255, 255),
-            font=font,
-        )
+            # Label in a blue circle
+            bbox = font.getbbox(label)
+            tw = bbox[2] - bbox[0]
+            th = bbox[3] - bbox[1]
+            pr = max(tw, th) // 2 + 4
+            draw.ellipse(
+                [cx_cell - pr, cy_cell - pr, cx_cell + pr, cy_cell + pr],
+                fill=(40, 120, 220, 180),
+            )
+            draw.text(
+                (cx_cell - tw // 2, cy_cell - th // 2 - 1),
+                label,
+                fill=(255, 255, 255, 255),
+                font=font,
+            )
 
     result = Image.alpha_composite(img, overlay).convert("RGB")
     buf = io.BytesIO()
@@ -207,12 +211,15 @@ def _build_fine_grid(crop_bytes: bytes) -> bytes:
 
 # ─────────────────────── Sub-cell → pixel mapping ─────────────────────────
 
-# Each letter maps to (fractional_x, fractional_y) within the zone
-_SUBCELL_OFFSETS: dict[str, tuple[float, float]] = {
-    "A": (1/6, 1/6), "B": (3/6, 1/6), "C": (5/6, 1/6),
-    "D": (1/6, 3/6), "E": (3/6, 3/6), "F": (5/6, 3/6),
-    "G": (1/6, 5/6), "H": (3/6, 5/6), "I": (5/6, 5/6),
-}
+# Each 4×4 cell label maps to (fractional_x, fractional_y) within the zone
+_SUBCELL_OFFSETS: dict[str, tuple[float, float]] = {}
+for _r_idx, _row_letter in enumerate("ABCD"):
+    for _c_idx in range(4):
+        _key = f"{_row_letter}{_c_idx + 1}"
+        _SUBCELL_OFFSETS[_key] = (
+            (2 * _c_idx + 1) / 8,   # center of column
+            (2 * _r_idx + 1) / 8,   # center of row
+        )
 
 
 def _subcell_to_pixel(zone: dict, cell_letter: str) -> tuple[int, int]:
@@ -308,7 +315,7 @@ def locate_labels(
         cell_map = _parse_fine(fine_result, z_labels)
 
         for lbl in z_labels:
-            cell_letter = cell_map.get(lbl, "E")
+            cell_letter = cell_map.get(lbl, "B2")
             px, py = _subcell_to_pixel(zone, cell_letter)
             px = max(10, min(px, width - 10))
             py = max(10, min(py, height - 10))
@@ -383,17 +390,17 @@ def _parse_coarse(
 
 
 def _parse_fine(result: list[dict], labels: list[str]) -> dict[str, str]:
-    """Parse fine pass result -> {label: cell_letter}."""
-    valid_cells = set("ABCDEFGHI")
+    """Parse fine pass result -> {label: cell_label}."""
+    valid_cells = set(_SUBCELL_OFFSETS.keys())
     mapping: dict[str, str] = {}
 
     for item in result:
         lbl = item.get("label", "")
-        cell = str(item.get("cell", "E")).upper().strip()
+        cell = str(item.get("cell", "B2")).upper().strip()
         if cell in valid_cells:
             mapping[lbl] = cell
         else:
-            mapping[lbl] = "E"
+            mapping[lbl] = "B2"  # center-ish fallback
 
     return mapping
 
@@ -410,7 +417,7 @@ def _call_vision(image_bytes: bytes, prompt: str, provider: str) -> list[dict]:
 
 @retry_on_rate_limit(max_retries=3, initial_wait=10)
 def _locate_with_gemini(image_bytes: bytes, prompt: str) -> list[dict]:
-    """Use Gemini Vision."""
+    """Use Gemini Vision with forced JSON output."""
     from google import genai
     from google.genai import types
 
@@ -422,7 +429,10 @@ def _locate_with_gemini(image_bytes: bytes, prompt: str) -> list[dict]:
             types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
             prompt,
         ],
-        config=types.GenerateContentConfig(temperature=0.1),
+        config=types.GenerateContentConfig(
+            temperature=0.1,
+            response_mime_type="application/json",  # Force JSON output
+        ),
     )
 
     return _parse_json_array(response.text or "")
@@ -458,15 +468,20 @@ def _locate_with_openai(image_bytes: bytes, prompt: str) -> list[dict]:
     return _parse_json_array(response.choices[0].message.content or "")
 
 
+import re as _re
+
 def _parse_json_array(text: str) -> list[dict]:
-    """Parse a JSON array from VLM response text."""
+    """Robustly extract a JSON array from VLM response text."""
     text = text.strip()
+
+    # Strip markdown code fences
     if text.startswith("```"):
-        text = text.split("\n", 1)[1]
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
         if text.endswith("```"):
             text = text[:-3]
         text = text.strip()
 
+    # Try direct parse first
     try:
         result = json.loads(text)
         if isinstance(result, list):
@@ -474,7 +489,31 @@ def _parse_json_array(text: str) -> list[dict]:
         for v in result.values():
             if isinstance(v, list):
                 return v
-        return []
     except json.JSONDecodeError:
-        print(f"[vision_placer] Failed to parse JSON: {text[:300]}")
-        return []
+        pass
+
+    # Try to find a JSON array embedded in prose
+    # Match the outermost [...] that contains {"label":
+    match = _re.search(r'\[\s*\{[^\]]*"label"[^\]]*\]', text, _re.DOTALL)
+    if match:
+        try:
+            result = json.loads(match.group(0))
+            if isinstance(result, list):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+    # Last resort: find all {"label": ..., "zone": ...} or {"label": ..., "cell": ...}
+    items = _re.findall(
+        r'\{\s*"label"\s*:\s*"([^"]+)"\s*,\s*"(zone|cell)"\s*:\s*["\s]*(\w+)["\s]*\}',
+        text,
+    )
+    if items:
+        extracted = []
+        for label, key, value in items:
+            val = int(value) if value.isdigit() else value
+            extracted.append({"label": label, key: val})
+        return extracted
+
+    print(f"[vision_placer] Failed to parse JSON: {text[:300]}")
+    return []

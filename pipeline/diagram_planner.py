@@ -58,16 +58,38 @@ Example output:
   "style": "colored_diagram",
   "description": "Dorsal view of a human right hand showing all 27 skeletal bones.",
   "diagram_type": "anatomy"
+}
+
+MULTI-VIEW DIAGRAMS:
+If the user asks for multiple views, layers, or types of the same subject side by side
+(e.g., "3 types of hand anatomy", "show skeletal and muscular views", "comparison of layers"):
+- Set "diagram_type" to "multi_view"
+- Set "label_side" to "both"
+- Start the drawing_prompt with "A wide landscape scientific medical illustration showing three views of..."
+- Maximum 100 words for multi-view prompts (more detail needed)
+- Describe each view (left, center, right) and what anatomy it shows
+- All other rules still apply (positive-only language, purely visual description)
+- Labels should cover structures from ALL views, ordered left-to-right then top-to-bottom
+
+Example multi-view input: "show me 3 types of hand anatomy"
+Example multi-view output:
+{
+  "drawing_prompt": "A wide landscape scientific medical illustration showing three dorsal views of a human right hand aligned side by side. Left hand showing tendons and extensor muscles with visible muscle fibers in natural tones. Center hand showing deep anatomy with muscles, red arteries, and yellow nerves. Right hand showing complete skeletal anatomy with all 27 bones in light bone-yellow. Same hand size in each view, vertically aligned. Clean white background, clinical textbook style, clear outlines.",
+  "labels": ["Extensor pollicis brevis", "Extensor digitorum", "Interossei", "Abductor pollicis brevis", "Extensor carpi ulnaris", "Extensor carpi radialis longus", "Extensor carpi radialis brevis", "Abductor pollicis longus", "DIP joint", "Distal phalanx", "PIP joint", "Extensor pollicis longus", "Middle phalanx", "Proximal phalanx", "MCP joint", "Metacarpals", "Carpals", "Ulna", "Radius"],
+  "label_side": "both",
+  "style": "colored_diagram",
+  "description": "Three views of a human right hand: tendons, deep anatomy, and skeletal structure.",
+  "diagram_type": "multi_view"
 }"""
 
 
 AUDITOR_SYSTEM_PROMPT = """You are a diagram plan auditor. Review the following diagram plan and check for:
 
-1. Is the drawing_prompt SHORT (under 60 words) and purely descriptive?
+1. Is the drawing_prompt concise and purely descriptive? (Under 60 words for single view, under 100 for multi_view)
 2. Does the drawing_prompt contain ONLY positive descriptions? It must NOT contain any prohibitions ("no", "do not", "without", "never", "must not") or mentions of text/labels/annotations.
 3. Are the labels comprehensive? Are any obvious anatomical/scientific parts missing?
-4. Does the drawing_prompt include "centered in the left two-thirds of the canvas"?
-5. Are labels ordered logically (as they'd appear in the image)?
+4. Are labels ordered logically (as they'd appear in the image)?
+5. If diagram_type is "multi_view", is label_side set to "both"? If single view, does the prompt include "centered in the left two-thirds of the canvas"?
 
 IMPORTANT NOTES:
 - "label_side" and "labels" are RENDERING parameters used AFTER image generation. Do NOT suggest removing them.

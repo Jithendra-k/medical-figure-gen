@@ -70,9 +70,56 @@ def compute_label_layout(
     compute optimal label text positions on the specified side.
 
     Sorts by y-coordinate and distributes labels evenly, avoiding overlap.
+    Supports "both" for bilateral labels (multi-view diagrams).
 
     Returns list of dicts with: label, point_x, point_y, label_x, label_y, anchor
     """
+    if not points:
+        return []
+
+    if label_side == "both":
+        return _layout_bilateral(points, image_width, image_height, font_size)
+
+    return _layout_one_side(points, image_width, image_height, label_side, font_size)
+
+
+def _layout_bilateral(
+    points: list[dict],
+    image_width: int,
+    image_height: int,
+    font_size: int,
+) -> list[dict]:
+    """Split labels by x-position: left half → left side, right half → right side."""
+    mid_x = image_width / 2
+    left_points = [p for p in points if p["point_x"] < mid_x]
+    right_points = [p for p in points if p["point_x"] >= mid_x]
+
+    # If all labels on one side, fall back to a reasonable split
+    if not left_points:
+        left_points = points[: len(points) // 2]
+        right_points = points[len(points) // 2 :]
+    elif not right_points:
+        right_points = points[len(points) // 2 :]
+        left_points = points[: len(points) // 2]
+
+    left_layout = _layout_one_side(
+        left_points, image_width, image_height, "left", font_size,
+    )
+    right_layout = _layout_one_side(
+        right_points, image_width, image_height, "right", font_size,
+    )
+
+    return left_layout + right_layout
+
+
+def _layout_one_side(
+    points: list[dict],
+    image_width: int,
+    image_height: int,
+    side: str,
+    font_size: int,
+) -> list[dict]:
+    """Layout labels on one side of the image."""
     if not points:
         return []
 
@@ -84,11 +131,10 @@ def compute_label_layout(
     sorted_points = sorted(points, key=lambda p: p["point_y"])
 
     # Determine label column position and text anchor
-    if label_side == "left":
+    if side == "left":
         label_x = margin
         anchor = "left"
-    elif label_side in ("bottom", "top"):
-        # For top/bottom, distribute horizontally — fall back to right for now
+    elif side in ("bottom", "top"):
         label_x = image_width - margin
         anchor = "right"
     else:  # default: right
@@ -117,7 +163,6 @@ def compute_label_layout(
 
     positions = []
     for i, point in enumerate(sorted_points):
-        # Compute max text width to set label_x properly
         tw, _ = _text_size(font, point["label"])
 
         if anchor == "right":

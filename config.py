@@ -29,8 +29,8 @@ GENERATED_DIR = STATIC_DIR / "generated"
 GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Model Settings ────────────────────────────────────────
-GEMINI_LLM_MODEL = "gemini-2.0-flash"
-GEMINI_IMAGE_MODEL = "gemini-2.0-flash-exp-image-generation"  # supports image output
+GEMINI_LLM_MODEL = "gemini-3-pro-preview"
+GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"  # supports image output
 OPENAI_IMAGE_MODEL = "dall-e-3"
 OPENAI_LLM_MODEL = "gpt-4o"
 
